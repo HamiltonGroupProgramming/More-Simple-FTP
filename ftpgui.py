@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Tuple
 
+from about import set_window_icon, show_about
 from appsettings import load_settings, save_settings
 from ftpclient import FTPClient, RemoteEntry, __version__, human_size
 from looks import LOOKS, Fonts, Look, apply_look, get_look
@@ -163,6 +164,7 @@ class App(tk.Tk):
         self.title(f"{APP_NAME} {__version__}")
         self.geometry("1100x740")
         self.minsize(760, 460)
+        set_window_icon(self)
         self.client = FTPClient()
         self.local_dir = os.path.expanduser("~")
         self.remote_dir = "/"
@@ -199,7 +201,13 @@ class App(tk.Tk):
                                       command=self.change_look)
         settings.add_cascade(label="Look", menu=look_menu)
         menubar.add_cascade(label="Settings", menu=settings)
+        help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(label=f"About {APP_NAME}", command=self.show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
         self.config(menu=menubar)
+
+    def show_about(self) -> None:
+        show_about(self, self.look, self.fonts, underline=squiggle)
 
     def change_look(self) -> None:
         key = self.look_var.get()
