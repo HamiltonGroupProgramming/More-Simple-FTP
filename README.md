@@ -5,6 +5,18 @@ A small, no-fuss FTP client for Windows (and anywhere Python runs), with:
 - **MoreSimpleFTP** – a classic two-pane window: your computer on the left, the server on the right. Upload, download (whole folders too), new folder, rename, delete, and optional FTP over TLS.
 - **ftpclient** – a command-line client with `ls`, `cd`, `pwd`, `lcd`, `get`, `put`, `mkdir`, `rm`, `rmdir [-r]`, and `rename`.
 
+## Change the look
+
+Pick **Settings → Look** in the window to switch between five looks. Your choice is remembered next time.
+
+- **Crayon "Simple"** (the default): hand-drawn boxes and crayon-coloured buttons.
+- **Clean modern**: light and tidy, with the buttons in a toolbar on top.
+- **Midnight (dark)**: dark mode with a monospace font. F5 uploads, F6 downloads.
+- **Big friendly buttons**: large text and big "Put on server" / "Bring to my computer" buttons.
+- **Classic (plain)**: the original plain window.
+
+Settings are saved in `%APPDATA%\MoreSimpleFTP\settings.json` on Windows (`~/.config/MoreSimpleFTP/settings.json` elsewhere).
+
 ## Install (Windows)
 
 Download `MoreSimpleFTP-<version>-setup.exe` from the [Releases](../../releases) page (or from the latest **Build** run under the Actions tab) and run it. No admin rights are needed. It adds a Start menu shortcut, and `ftpclient.exe` sits next to the app for command-line use.
