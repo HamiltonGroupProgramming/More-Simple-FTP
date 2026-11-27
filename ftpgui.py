@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""More Simple FTP - classic two-pane GUI (local files left, server files right)."""
+"""More Simple FTP - two-pane GUI (local files left, server files right) with switchable looks."""
 
 from __future__ import annotations
 
@@ -7,14 +7,17 @@ import ftplib
 import os
 import posixpath
 import queue
+import random
 import shutil
 import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
+from appsettings import load_settings, save_settings
 from ftpclient import FTPClient, RemoteEntry, __version__, human_size
+from looks import LOOKS, Fonts, Look, apply_look, get_look
 
 APP_NAME = "More Simple FTP"
 
@@ -22,24 +25,26 @@ APP_NAME = "More Simple FTP"
 class FilePane(ttk.Frame):
     """A titled file list with a path bar."""
 
-    def __init__(self, master: tk.Misc, title: str, on_open: Callable[[str], None]) -> None:
-        super().__init__(master, padding=4)
+    def __init__(self, master: tk.Misc, title: str, title_style: str,
+                 on_open: Callable[[str], None], font=None, scale: float = 1.0) -> None:
+        super().__init__(master, padding=4, style="Card.TFrame")
         self.on_open = on_open
-        ttk.Label(self, text=title, font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
+        self.last: Tuple[str, List[RemoteEntry]] = ("", [])
+        ttk.Label(self, text=title, style=title_style).pack(anchor="w")
         self.path_var = tk.StringVar()
-        path_entry = ttk.Entry(self, textvariable=self.path_var)
-        path_entry.pack(fill="x", pady=(2, 4))
+        path_entry = ttk.Entry(self, textvariable=self.path_var, font=font)
+        path_entry.pack(fill="x", pady=(2, 6))
         path_entry.bind("<Return>", lambda e: self.on_open(self.path_var.get()))
 
-        body = ttk.Frame(self)
+        body = ttk.Frame(self, style="Card.TFrame")
         body.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(body, columns=("size", "modified"), selectmode="extended")
         self.tree.heading("#0", text="Name")
         self.tree.heading("size", text="Size")
         self.tree.heading("modified", text="Modified")
-        self.tree.column("#0", width=220)
-        self.tree.column("size", width=80, anchor="e")
-        self.tree.column("modified", width=140)
+        self.tree.column("#0", width=120, minwidth=80)
+        self.tree.column("size", width=int(70 * scale), anchor="e", stretch=False)
+        self.tree.column("modified", width=int(130 * scale), stretch=False)
         scroll = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -49,6 +54,7 @@ class FilePane(ttk.Frame):
         self.tree.bind("<BackSpace>", lambda e: self.on_open(".."))
 
     def show(self, path: str, entries: List[RemoteEntry]) -> None:
+        self.last = (path, list(entries))
         self.path_var.set(path)
         self.tree.delete(*self.tree.get_children())
         self.tree.insert("", "end", iid="..", text="📁 ..", values=("", ""))
@@ -77,80 +83,333 @@ class FilePane(ttk.Frame):
             self.on_open(sel[2:])
 
 
+def rough_line(rng: random.Random, x0: float, y0: float, x1: float, y1: float,
+               wobble: float = 2.5) -> List[float]:
+    """Points along a line with a little hand-drawn wobble."""
+    steps = max(int(max(abs(x1 - x0), abs(y1 - y0)) / 40), 2)
+    pts: List[float] = []
+    for i in range(steps + 1):
+        t = i / steps
+        jitter = 0 if i in (0, steps) else wobble
+        pts += [x0 + (x1 - x0) * t + rng.uniform(-jitter, jitter),
+                y0 + (y1 - y0) * t + rng.uniform(-jitter, jitter)]
+    return pts
+
+
+class Card(tk.Frame):
+    """A box around part of the window: a hand-drawn crayon outline, a thin border, or nothing.
+
+    Put children in ``.inner``.
+    """
+
+    def __init__(self, master: tk.Misc, look: Look, outline: Optional[str] = None,
+                 fit_height: bool = False, pad: int = 10) -> None:
+        c = look.colors or {}
+        super().__init__(master, bg=c.get("bg"), highlightthickness=0, bd=0)
+        self.look = look
+        self.outline = outline or c.get("border", "black")
+        self.pad = pad if look.colors else 0
+        self.fit_height = fit_height
+        self.seed = random.randrange(1 << 30)
+        self.canvas: Optional[tk.Canvas] = None
+        if look.sketchy:
+            self.canvas = tk.Canvas(self, bg=c["bg"], highlightthickness=0, bd=0)
+            self.canvas.place(x=0, y=0, relwidth=1, relheight=1)
+            self.bind("<Configure>", lambda e: self._draw())
+        elif look.colors:
+            self.configure(bg=c["panel"], highlightthickness=1, highlightbackground=c["border"],
+                           highlightcolor=c["border"])
+        self.inner = ttk.Frame(self, style="Card.TFrame" if look.colors else "TFrame")
+        fill = "x" if fit_height else "both"
+        self.inner.pack(fill=fill, expand=not fit_height, padx=self.pad, pady=self.pad)
+
+    def _draw(self) -> None:
+        cv = self.canvas
+        if cv is None:
+            return
+        cv.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 20 or h < 20:
+            return
+        rng = random.Random(self.seed)
+        m = 4
+        for width, shift in ((3, 0.0), (1.5, 1.5)):  # two passes, like going over it in crayon
+            corners = [(m + rng.uniform(-2, 2) + shift, m + rng.uniform(-2, 2)),
+                       (w - m + rng.uniform(-2, 2), m + rng.uniform(-2, 2) + shift),
+                       (w - m + rng.uniform(-2, 2) - shift, h - m + rng.uniform(-2, 2)),
+                       (m + rng.uniform(-2, 2), h - m + rng.uniform(-2, 2) - shift)]
+            for i in range(4):
+                (ax, ay), (bx, by) = corners[i], corners[(i + 1) % 4]
+                # overshoot the corners a touch so it looks drawn by hand
+                dx, dy = (bx - ax) * 0.01, (by - ay) * 0.01
+                cv.create_line(*rough_line(rng, ax - dx, ay - dy, bx + dx, by + dy),
+                               fill=self.outline, width=width, smooth=True, capstyle="round")
+
+
+def squiggle(master: tk.Misc, color: str, bg: str, width: int = 260) -> tk.Canvas:
+    """A crayon underline."""
+    cv = tk.Canvas(master, width=width, height=12, bg=bg, highlightthickness=0, bd=0)
+    rng = random.Random(7)
+    pts: List[float] = []
+    for i in range(9):
+        pts += [4 + (width - 8) * i / 8, 6 + rng.uniform(-3, 3)]
+    cv.create_line(*pts, fill=color, width=4, smooth=True, capstyle="round")
+    return cv
+
+
 class App(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, settings_file: Optional[str] = None) -> None:
         super().__init__()
         self.title(f"{APP_NAME} {__version__}")
-        self.geometry("1000x640")
-        self.minsize(720, 420)
+        self.geometry("1100x740")
+        self.minsize(760, 460)
         self.client = FTPClient()
         self.local_dir = os.path.expanduser("~")
         self.remote_dir = "/"
         self.busy = False
         self.ui_queue: "queue.Queue[Callable[[], None]]" = queue.Queue()
+        self.settings_file = settings_file
+        self.settings = load_settings(settings_file)
+        self.system_theme = ttk.Style(self).theme_use()
 
-        self._build_connect_bar()
-        self._build_panes()
-        self._build_status()
-        self.refresh_local()
-        self.after(50, self._drain_queue)
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-
-    # ------------------------------------------------------------ layout
-    def _build_connect_bar(self) -> None:
-        bar = ttk.Frame(self, padding=(6, 6, 6, 0))
-        bar.pack(fill="x")
         self.host_var = tk.StringVar()
         self.port_var = tk.StringVar(value="21")
         self.user_var = tk.StringVar(value="anonymous")
         self.pass_var = tk.StringVar()
         self.tls_var = tk.BooleanVar(value=False)
-        for label, var, width, show in (("Host", self.host_var, 24, ""), ("Port", self.port_var, 6, ""),
-                                         ("User", self.user_var, 14, ""), ("Password", self.pass_var, 14, "•")):
-            ttk.Label(bar, text=label).pack(side="left", padx=(6, 2))
-            entry = ttk.Entry(bar, textvariable=var, width=width, show=show)
+        self.active_side = tk.StringVar(value="remote")
+        self.look_var = tk.StringVar(value=get_look(self.settings.get("look")).key)
+
+        self.shell: Optional[tk.Frame] = None
+        self._build_menu()
+        self.build_ui()
+        self.refresh_local()
+        self.bind_all("<F5>", lambda e: self.upload())
+        self.bind_all("<F6>", lambda e: self.download())
+        self.after(50, self._drain_queue)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ------------------------------------------------------------ looks
+    def _build_menu(self) -> None:
+        menubar = tk.Menu(self)
+        settings = tk.Menu(menubar, tearoff=False)
+        look_menu = tk.Menu(settings, tearoff=False)
+        for key, look in LOOKS.items():
+            look_menu.add_radiobutton(label=look.name, value=key, variable=self.look_var,
+                                      command=self.change_look)
+        settings.add_cascade(label="Look", menu=look_menu)
+        menubar.add_cascade(label="Settings", menu=settings)
+        self.config(menu=menubar)
+
+    def change_look(self) -> None:
+        key = self.look_var.get()
+        if key == self.look.key:
+            return
+        self.build_ui()
+        self.settings["look"] = key
+        try:
+            save_settings(self.settings, self.settings_file)
+        except OSError as exc:
+            self.write_log(f"Could not save settings: {exc}")
+        self.write_log(f"Look changed to {self.look.name}.")
+
+    def build_ui(self) -> None:
+        """(Re)build every widget in the chosen look, keeping what's on screen."""
+        old_log = ""
+        old_local = old_remote = None
+        if self.shell is not None:
+            old_log = self.log.get("1.0", "end-1c")
+            old_local, old_remote = self.local_pane.last, self.remote_pane.last
+            self.shell.destroy()
+
+        self.look = get_look(self.look_var.get())
+        self.fonts: Fonts = apply_look(self, self.look, self.system_theme)
+        c = self.look.colors or {}
+        self.configure(bg=c.get("bg", ttk.Style(self).lookup("TFrame", "background") or None))
+        self.option_add("*TCombobox*Listbox.font", self.fonts.body)
+
+        self.shell = ttk.Frame(self, padding=(14, 10) if self.look.colors else 0)
+        self.shell.pack(fill="both", expand=True)
+        if self.look.header:
+            self._build_header()
+        self._build_connect_bar()
+        if self.look.actions == "top":
+            self._build_toolbar()
+        # bottom-anchored parts go in before the panes so the panes give up space, not them
+        self._build_status()
+        if self.look.actions == "bottom":
+            self._build_toolbar()
+        self._build_panes()
+
+        if old_local is not None:
+            self.local_pane.show(*old_local)
+            self.remote_pane.show(*old_remote)
+            self.log.configure(state="normal")
+            self.log.insert("end", old_log)
+            self.log.see("end")
+            self.log.configure(state="disabled")
+        self._update_connected()
+
+    # ------------------------------------------------------------ layout
+    def _build_header(self) -> None:
+        look, c = self.look, self.look.colors or {}
+        bar = ttk.Frame(self.shell)
+        bar.pack(fill="x", pady=(0, 8))
+        title = ttk.Frame(bar)
+        title.pack(side="left")
+        ttk.Label(title, text=APP_NAME, style="Header.TLabel").pack(anchor="w")
+        if look.sketchy:
+            squiggle(title, c["accent2"], c["bg"]).pack(anchor="w")
+        self.status_label = ttk.Label(bar, style="Status.TLabel")
+        self.status_label.pack(side="right")
+
+    def _build_connect_bar(self) -> None:
+        look = self.look
+        card = Card(self.shell, look, fit_height=True, pad=8)
+        card.pack(fill="x", pady=(0, 8) if look.colors else (6, 0), padx=0 if look.colors else 6)
+        bar = card.inner
+        self.connect_btn = ttk.Button(bar, text=look.label("connect"), command=self.toggle_connection,
+                                      style="Primary.TButton" if look.colors else "TButton")
+        if look.colors:
+            self.connect_btn.pack(side="right", padx=4)
+        shrink = min(1.0, 9 / look.size)
+        for key, var, width, show in (("host", self.host_var, 24, ""), ("port", self.port_var, 6, ""),
+                                       ("user", self.user_var, 14, ""), ("password", self.pass_var, 14, "•")):
+            width = max(int(width * shrink), 5)
+            ttk.Label(bar, text=look.label(key), style="Card.TLabel" if look.colors else "TLabel",
+                      font=self.fonts.body).pack(side="left", padx=(6, 3))
+            entry = ttk.Entry(bar, textvariable=var, width=width, show=show, font=self.fonts.body)
             entry.pack(side="left")
             entry.bind("<Return>", lambda e: self.connect())
-        ttk.Checkbutton(bar, text="TLS", variable=self.tls_var).pack(side="left", padx=6)
-        self.connect_btn = ttk.Button(bar, text="Connect", command=self.toggle_connection)
-        self.connect_btn.pack(side="left", padx=4)
+        ttk.Checkbutton(bar, text=look.label("tls"), variable=self.tls_var,
+                        style="Card.TCheckbutton").pack(side="left", padx=8)
+        if not look.colors:
+            self.connect_btn.pack(side="left", padx=4)
+        else:
+            ttk.Style(self).configure("Card.TCheckbutton", background=look.colors["panel"])
+
+    def _action_buttons(self, parent: tk.Misc, side: Optional[str],
+                        file_parent: Optional[tk.Misc] = None) -> None:
+        """Upload/download plus the file actions, stacked (side=None) or in a row.
+
+        ``file_parent`` puts the file actions in a separate row.
+        """
+        look = self.look
+        styled = bool(look.colors)
+
+        def btn(key: str, cmd: Callable[[], None], style: str = "TButton") -> ttk.Button:
+            nonlocal parent
+            b = ttk.Button(parent, text=look.label(key), command=cmd, style=style if styled else "TButton")
+            if side:
+                b.pack(side=side, padx=(0, 8))
+            else:
+                b.pack(fill="x", pady=4)
+            return b
+
+        btn("upload", self.upload, "Primary.TButton")
+        btn("download", self.download, "Secondary.TButton")
+        if file_parent is not None:
+            parent = file_parent
+        elif side:
+            ttk.Separator(parent, orient="vertical").pack(side=side, fill="y", padx=(4, 12), pady=4)
+        else:
+            ttk.Separator(parent).pack(fill="x", pady=8)
+        btn("new_folder", self.new_folder)
+        btn("rename", self.rename)
+        btn("delete", self.delete, "Danger.TButton")
+        btn("refresh", self.refresh_all)
+
+    def _side_picker(self, parent: tk.Misc, row: bool) -> None:
+        look = self.look
+        if row:
+            f = ttk.Frame(parent)
+            f.pack(side="right")
+            ttk.Label(f, text=look.label("apply_to").replace("\n", " "),
+                      style="Muted.TLabel").pack(side="left", padx=(8, 4))
+            ttk.Radiobutton(f, text=look.label("local"), value="local",
+                            variable=self.active_side).pack(side="left", padx=4)
+            ttk.Radiobutton(f, text=look.label("remote"), value="remote",
+                            variable=self.active_side).pack(side="left", padx=4)
+            if look.label("hint"):
+                ttk.Label(parent, text=look.label("hint"), style="Muted.TLabel").pack(side="right", padx=12)
+        else:
+            ttk.Label(parent, text=look.label("apply_to"), justify="center").pack(pady=(10, 2))
+            ttk.Radiobutton(parent, text=look.label("remote"), value="remote",
+                            variable=self.active_side).pack(anchor="w")
+            ttk.Radiobutton(parent, text=look.label("local"), value="local",
+                            variable=self.active_side).pack(anchor="w")
+
+    def _build_toolbar(self) -> None:
+        bar = ttk.Frame(self.shell)
+        top = self.look.actions == "top"
+        if top:
+            bar.pack(fill="x", pady=(0, 8))
+        else:
+            bar.pack(side="bottom", fill="x", pady=(8, 0))
+        if self.look.toolbar_rows == 2:
+            first, second = ttk.Frame(bar), ttk.Frame(bar)
+            first.pack(fill="x")
+            second.pack(fill="x", pady=(8, 0))
+            self._action_buttons(first, side="left", file_parent=second)
+            self._side_picker(first, row=True)
+        else:
+            self._action_buttons(bar, side="left")
+            self._side_picker(bar, row=True)
 
     def _build_panes(self) -> None:
-        paned = ttk.PanedWindow(self, orient="horizontal")
-        paned.pack(fill="both", expand=True, padx=6, pady=6)
+        look = self.look
+        c = look.colors or {}
+        paned = ttk.PanedWindow(self.shell, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=0 if look.colors else 6, pady=0 if look.colors else 6)
 
-        self.local_pane = FilePane(paned, "This computer", self.open_local)
-        self.remote_pane = FilePane(paned, "Server", self.open_remote)
+        local_card = Card(paned, look, outline=c.get("local"))
+        remote_card = Card(paned, look, outline=c.get("remote"))
+        font, scale = self.fonts.body, max(look.size / 10, 1.0)
+        self.local_pane = FilePane(local_card.inner, look.label("local"), "LocalTitle.TLabel",
+                                   self.open_local, font, scale)
+        self.remote_pane = FilePane(remote_card.inner, look.label("remote"), "RemoteTitle.TLabel",
+                                    self.open_remote, font, scale)
+        self.local_pane.pack(fill="both", expand=True)
+        self.remote_pane.pack(fill="both", expand=True)
 
-        middle = ttk.Frame(paned, padding=(4, 40))
-        ttk.Button(middle, text="Upload →", command=self.upload).pack(fill="x", pady=4)
-        ttk.Button(middle, text="← Download", command=self.download).pack(fill="x", pady=4)
-        ttk.Separator(middle).pack(fill="x", pady=10)
-        ttk.Button(middle, text="New folder", command=self.new_folder).pack(fill="x", pady=4)
-        ttk.Button(middle, text="Rename", command=self.rename).pack(fill="x", pady=4)
-        ttk.Button(middle, text="Delete", command=self.delete).pack(fill="x", pady=4)
-        ttk.Button(middle, text="Refresh", command=self.refresh_all).pack(fill="x", pady=4)
-        self.active_side = tk.StringVar(value="remote")
-        ttk.Label(middle, text="Folder/rename/delete\napply to:").pack(pady=(14, 2))
-        ttk.Radiobutton(middle, text="Server", value="remote", variable=self.active_side).pack(anchor="w")
-        ttk.Radiobutton(middle, text="This computer", value="local", variable=self.active_side).pack(anchor="w")
+        paned.add(local_card, weight=1)
+        if look.actions == "middle":
+            middle = ttk.Frame(paned, padding=(10, 6) if look.colors else (4, 40))
+            self._action_buttons(middle, side=None)
+            self._side_picker(middle, row=False)
+            paned.add(middle, weight=0)
+        else:
+            paned.add(ttk.Frame(paned, width=12), weight=0)  # a gap between the two cards
+        paned.add(remote_card, weight=1)
 
-        paned.add(self.local_pane, weight=1)
-        paned.add(middle, weight=0)
-        paned.add(self.remote_pane, weight=1)
-
-        self.local_pane.tree.bind("<FocusIn>", lambda e: self.active_side.set("local"), add="+")
-        self.remote_pane.tree.bind("<FocusIn>", lambda e: self.active_side.set("remote"), add="+")
-        self.local_pane.tree.bind("<Delete>", lambda e: self.delete())
-        self.remote_pane.tree.bind("<Delete>", lambda e: self.delete())
+        for pane, side in ((self.local_pane, "local"), (self.remote_pane, "remote")):
+            pane.tree.bind("<FocusIn>", lambda e, s=side: self.active_side.set(s), add="+")
+            pane.tree.bind("<Delete>", lambda e: self.delete())
 
     def _build_status(self) -> None:
-        bottom = ttk.Frame(self, padding=(6, 0, 6, 6))
-        bottom.pack(fill="x")
+        look = self.look
+        c = look.colors or {}
+        bottom = ttk.Frame(self.shell, padding=(0, 8, 0, 0) if look.colors else (6, 0, 6, 6))
+        bottom.pack(side="bottom", fill="x")
         self.progress = ttk.Progressbar(bottom, mode="determinate", maximum=100)
         self.progress.pack(fill="x")
-        self.log = tk.Text(bottom, height=6, state="disabled", wrap="word")
-        self.log.pack(fill="x", pady=(4, 0))
+        self.log = tk.Text(bottom, height=look.log_lines, state="disabled", wrap="word")
+        if look.colors:
+            self.log.configure(bg=c.get("log_bg", c["field"]), fg=c["muted"], font=self.fonts.small,
+                               relief="flat", highlightthickness=1, highlightbackground=c["border"],
+                               insertbackground=c["ink"], padx=8, pady=6)
+        self.log.pack(fill="x", pady=(6, 0))
+
+    def _update_connected(self) -> None:
+        on = self.client.connected
+        self.connect_btn.configure(text=self.look.label("disconnect" if on else "connect"))
+        if self.look.header:
+            text = self.look.label("status_on" if on else "status_off")
+            if on and self.host_var.get():
+                text += f"  {self.host_var.get().strip()}"
+            self.status_label.configure(text=text)
+            if self.look.colors:
+                self.status_label.configure(foreground=self.look.colors["ok" if on else "muted"])
 
     # ------------------------------------------------------------ threading
     def _drain_queue(self) -> None:
@@ -231,7 +490,7 @@ class App(tk.Tk):
         def done(result):
             welcome, cwd, entries = result
             self.write_log(welcome)
-            self.connect_btn.configure(text="Disconnect")
+            self._update_connected()
             self.remote_dir = cwd
             self.remote_pane.show(cwd, entries)
 
@@ -239,7 +498,7 @@ class App(tk.Tk):
 
     def disconnect(self) -> None:
         self.client.close()
-        self.connect_btn.configure(text="Connect")
+        self._update_connected()
         self.remote_pane.show("", [])
         self.write_log("Disconnected.")
 
