@@ -1,6 +1,6 @@
 ; Inno Setup script for More Simple FTP.
 ; Build with:  iscc /DAppVersion=0.1.0 installer\more-simple-ftp.iss
-; Expects PyInstaller output in dist\ (see build.ps1).
+; Expects PyInstaller output in dist\MoreSimpleFTP\ and dist\ftpclient.exe (see build.ps1).
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
@@ -22,13 +22,16 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\MoreSimpleFTP.exe
+SetupIconFile=..\assets\more_simple_ftp.ico
+CloseApplications=yes
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\dist\MoreSimpleFTP.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\MoreSimpleFTP\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist\ftpclient.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 

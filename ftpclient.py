@@ -381,7 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    args = build_parser().parse_intermixed_args(list(argv) if argv is not None else None)
     password = args.password
     if password is None:
         password = "" if args.user == "anonymous" else getpass.getpass(f"Password for {args.user}: ")
