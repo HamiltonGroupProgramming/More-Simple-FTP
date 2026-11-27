@@ -79,6 +79,20 @@ def test_cli_one_shot(server, capsys):
     assert "hello.txt" in capsys.readouterr().out
 
 
+def test_cli_save_then_use_saved_connection(server, capsys, tmp_path):
+    from connections import SavedConnections
+    from test_connections import FakeStore
+    port, _ = server
+    saved = SavedConnections(str(tmp_path / "settings.json"), FakeStore())
+    rc = ftpclient.main(["-P", str(port), "-u", "alice", "-p", "secret",
+                         "--save", "test", "--save-password", "127.0.0.1", "pwd"], saved)
+    assert rc == 0
+    assert "Saved as test (with password)" in capsys.readouterr().out
+    rc = ftpclient.main(["test", "ls"], saved)  # no host, port, user or password typed
+    assert rc == 0
+    assert "hello.txt" in capsys.readouterr().out
+
+
 def test_parse_list_lines():
     e = _parse_list_line("-rw-r--r--   1 ftp ftp   1234 Jan 01 10:00 my file.txt")
     assert (e.name, e.is_dir, e.size) == ("my file.txt", False, 1234)

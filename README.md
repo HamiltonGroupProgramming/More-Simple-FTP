@@ -5,6 +5,22 @@ A small, no-fuss FTP client for Windows (and anywhere Python runs), with:
 - **MoreSimpleFTP** – a classic two-pane window: your computer on the left, the server on the right. Upload, download (whole folders too), new folder, rename, delete, and optional FTP over TLS.
 - **ftpclient** – a command-line client with `ls`, `cd`, `pwd`, `lcd`, `get`, `put`, `mkdir`, `rm`, `rmdir [-r]`, and `rename`.
 
+## Save your connections
+
+Fill in the server, port, name and password once, then press **Save** (in the Crayon look it says **Remember it**) next to the **Saved** list at the top. Give it a name like "Work site". Next time, pick it from the list and press Connect. The last one you used is filled in when the app opens.
+
+- Ticking **Remember the password** keeps it in Windows Credential Manager, never in a plain file. Leave it unticked and you'll be asked to type it each time.
+- **Forget** removes the selected connection (and its password).
+- The command line uses the same list:
+
+```
+ftpclient ftp.example.com -u alice --save work --save-password   # connect, then save as "work"
+ftpclient work                                                   # connect using the saved details
+ftpclient work ls /pub                                           # one command with a saved connection
+ftpclient --saved                                                # list saved connections
+ftpclient --forget work                                          # delete one
+```
+
 ## Change the look
 
 Pick **Settings → Look** in the window to switch between five looks. Your choice is remembered next time.
@@ -15,7 +31,7 @@ Pick **Settings → Look** in the window to switch between five looks. Your choi
 - **Big friendly buttons**: large text and big "Put on server" / "Bring to my computer" buttons.
 - **Classic (plain)**: the original plain window.
 
-Settings are saved in `%APPDATA%\MoreSimpleFTP\settings.json` on Windows (`~/.config/MoreSimpleFTP/settings.json` elsewhere).
+Settings and saved connections (without passwords) are kept in `%APPDATA%\MoreSimpleFTP\settings.json` on Windows (`~/.config/MoreSimpleFTP/settings.json` elsewhere).
 
 ## Install (Windows)
 
