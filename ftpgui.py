@@ -18,6 +18,7 @@ from tkinter import font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Tuple
 
+from about import set_window_icon, show_about
 from appsettings import load_settings, save_settings
 from connections import Connection, SavedConnections, default_name
 from ftpclient import FTPClient, RemoteEntry, __version__, human_size
@@ -168,6 +169,7 @@ class App(tk.Tk):
         self.title(f"{APP_NAME} {__version__}")
         self.geometry("1100x740")
         self.minsize(760, 460)
+        set_window_icon(self)
         self.client = FTPClient()
         self.local_dir = os.path.expanduser("~")
         self.remote_dir = "/"
@@ -211,10 +213,12 @@ class App(tk.Tk):
         menubar.add_cascade(label="Settings", menu=settings)
         help_menu = tk.Menu(menubar, tearoff=False)
         help_menu.add_command(label="What's new", command=self.show_changelog)
-        help_menu.add_command(label=f"About {APP_NAME}", command=lambda: messagebox.showinfo(
-            APP_NAME, f"{APP_NAME} {__version__}", parent=self))
+        help_menu.add_command(label=f"About {APP_NAME}", command=self.show_about)
         menubar.add_cascade(label="Help", menu=help_menu)
         self.config(menu=menubar)
+
+    def show_about(self) -> None:
+        show_about(self, self.look, self.fonts, underline=squiggle)
 
     def show_changelog(self) -> None:
         if getattr(self, "changelog_win", None) is not None and self.changelog_win.winfo_exists():

@@ -13,6 +13,7 @@
 - Pick a look under **Settings → Look**: Crayon "Simple" (the new default), Clean modern, Midnight (dark), Big friendly buttons, or Classic (the original plain window). Your choice is remembered.
 
 ### Other
+- **Help → About** shows the version with the Hamilton Group Programming logo, and the app has its own crayon-style icon.
 - **Help → What's new** shows this page.
 
 ## 0.1.0 (2026-11-27)

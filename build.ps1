@@ -9,8 +9,8 @@ python -m pip install -r requirements-build.txt
 $version = (python -c "import ftpclient; print(ftpclient.__version__)").Trim()
 Write-Host "Building More Simple FTP $version"
 
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name MoreSimpleFTP --hidden-import keyring.backends.Windows --add-data "CHANGELOG.md;." ftpgui.py
-python -m PyInstaller --noconfirm --clean --onefile --console  --name ftpclient     --hidden-import connections --hidden-import keyring.backends.Windows ftpclient.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name MoreSimpleFTP --icon assets\icon.ico --add-data "assets;assets" --add-data "CHANGELOG.md;." --hidden-import keyring.backends.Windows ftpgui.py
+python -m PyInstaller --noconfirm --clean --onefile --console  --name ftpclient     --icon assets\icon.ico --hidden-import connections --hidden-import keyring.backends.Windows ftpclient.py
 
 $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
 if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }

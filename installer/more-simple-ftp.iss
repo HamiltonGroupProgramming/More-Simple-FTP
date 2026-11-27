@@ -21,6 +21,7 @@ OutputBaseFilename=MoreSimpleFTP-{#AppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\MoreSimpleFTP.exe
 ArchitecturesInstallIn64BitMode=x64compatible
 
