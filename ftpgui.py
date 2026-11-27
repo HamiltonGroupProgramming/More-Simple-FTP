@@ -8,19 +8,24 @@ import os
 import posixpath
 import queue
 import random
+import re
 import shutil
+import sys
 import threading
 import time
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Tuple
 
 from about import set_window_icon, show_about
 from appsettings import load_settings, save_settings
+from connections import Connection, SavedConnections, default_name
 from ftpclient import FTPClient, RemoteEntry, __version__, human_size
 from looks import LOOKS, Fonts, Look, apply_look, get_look
 
 APP_NAME = "More Simple FTP"
+PASSWORD_STORE = "Windows Credential Manager" if sys.platform == "win32" else "your system's password store"
 
 
 class FilePane(ttk.Frame):
@@ -181,10 +186,15 @@ class App(tk.Tk):
         self.tls_var = tk.BooleanVar(value=False)
         self.active_side = tk.StringVar(value="remote")
         self.look_var = tk.StringVar(value=get_look(self.settings.get("look")).key)
+        self.saved = SavedConnections(settings_file)
+        self.saved_var = tk.StringVar()
 
         self.shell: Optional[tk.Frame] = None
         self._build_menu()
         self.build_ui()
+        last = self.saved.last_used()
+        if last:
+            self.load_saved(last.name)
         self.refresh_local()
         self.bind_all("<F5>", lambda e: self.upload())
         self.bind_all("<F6>", lambda e: self.download())
@@ -202,6 +212,7 @@ class App(tk.Tk):
         settings.add_cascade(label="Look", menu=look_menu)
         menubar.add_cascade(label="Settings", menu=settings)
         help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(label="What's new", command=self.show_changelog)
         help_menu.add_command(label=f"About {APP_NAME}", command=self.show_about)
         menubar.add_cascade(label="Help", menu=help_menu)
         self.config(menu=menubar)
@@ -209,11 +220,18 @@ class App(tk.Tk):
     def show_about(self) -> None:
         show_about(self, self.look, self.fonts, underline=squiggle)
 
+    def show_changelog(self) -> None:
+        if getattr(self, "changelog_win", None) is not None and self.changelog_win.winfo_exists():
+            self.changelog_win.lift()
+            return
+        self.changelog_win = ChangelogWindow(self, self.look, self.fonts)
+
     def change_look(self) -> None:
         key = self.look_var.get()
         if key == self.look.key:
             return
         self.build_ui()
+        self.settings = load_settings(self.settings_file)  # keep saved connections intact
         self.settings["look"] = key
         try:
             save_settings(self.settings, self.settings_file)
@@ -275,7 +293,9 @@ class App(tk.Tk):
         look = self.look
         card = Card(self.shell, look, fit_height=True, pad=8)
         card.pack(fill="x", pady=(0, 8) if look.colors else (6, 0), padx=0 if look.colors else 6)
-        bar = card.inner
+        self._build_saved_row(card.inner)
+        bar = ttk.Frame(card.inner, style="Card.TFrame" if look.colors else "TFrame")
+        bar.pack(fill="x")
         self.connect_btn = ttk.Button(bar, text=look.label("connect"), command=self.toggle_connection,
                                       style="Primary.TButton" if look.colors else "TButton")
         if look.colors:
@@ -289,12 +309,105 @@ class App(tk.Tk):
             entry = ttk.Entry(bar, textvariable=var, width=width, show=show, font=self.fonts.body)
             entry.pack(side="left")
             entry.bind("<Return>", lambda e: self.connect())
+            if key == "password":
+                self.pass_entry = entry
         ttk.Checkbutton(bar, text=look.label("tls"), variable=self.tls_var,
                         style="Card.TCheckbutton").pack(side="left", padx=8)
         if not look.colors:
             self.connect_btn.pack(side="left", padx=4)
         else:
             ttk.Style(self).configure("Card.TCheckbutton", background=look.colors["panel"])
+
+    def _build_saved_row(self, parent: tk.Misc) -> None:
+        """Saved connections: pick one to fill in the boxes, or save/forget the current one."""
+        look = self.look
+        styled = bool(look.colors)
+        row = ttk.Frame(parent, style="Card.TFrame" if styled else "TFrame")
+        row.pack(fill="x", pady=(0, 6))
+        ttk.Label(row, text=look.label("saved"), style="Card.TLabel" if styled else "TLabel",
+                  font=self.fonts.body).pack(side="left", padx=(6, 3))
+        self.saved_box = ttk.Combobox(row, textvariable=self.saved_var, state="readonly",
+                                      width=max(int(28 * min(1.0, 10 / look.size)), 16),
+                                      font=self.fonts.body)
+        self.saved_box.pack(side="left")
+        self.saved_box.bind("<<ComboboxSelected>>", lambda e: self.load_saved(self.saved_var.get()))
+        ttk.Button(row, text=look.label("save_conn"), command=self.save_current,
+                   style="TButton").pack(side="left", padx=(8, 4))
+        self.forget_btn = ttk.Button(row, text=look.label("forget_conn"), command=self.forget_saved,
+                                     style="Danger.TButton" if styled else "TButton")
+        self.forget_btn.pack(side="left", padx=4)
+        self._refresh_saved_list()
+
+    def _refresh_saved_list(self) -> None:
+        names = self.saved.names()
+        self.saved_box.configure(values=names)
+        if self.saved_var.get() not in names:
+            self.saved_var.set("")
+        self.forget_btn.state(["!disabled"] if self.saved_var.get() else ["disabled"])
+
+    # ------------------------------------------------------------ saved connections
+    def load_saved(self, name: str) -> None:
+        conn = self.saved.get(name)
+        if conn is None:
+            return
+        self.saved_var.set(conn.name)
+        self.host_var.set(conn.host)
+        self.port_var.set(str(conn.port))
+        self.user_var.set(conn.user)
+        self.tls_var.set(conn.tls)
+        self.pass_var.set(self.saved.password(conn) or "")
+        self._refresh_saved_list()
+        if not self.pass_var.get() and conn.user != "anonymous":
+            self.after_idle(self.pass_entry.focus_set)
+
+    def save_current(self) -> None:
+        host = self.host_var.get().strip()
+        if not host:
+            messagebox.showwarning(APP_NAME, "Fill in the server first, then save it.")
+            return
+        try:
+            port = int(self.port_var.get() or 21)
+        except ValueError:
+            messagebox.showwarning(APP_NAME, "Port must be a number.")
+            return
+        user = self.user_var.get().strip() or "anonymous"
+        current = self.saved.get(self.saved_var.get()) if self.saved_var.get() else None
+        suggested = current.name if current and current.host == host else default_name(host, user)
+        dialog = SaveDialog(self, self.look, suggested,
+                            has_password=bool(self.pass_var.get()),
+                            can_store=self.saved.can_save_passwords,
+                            remember=current.save_password if current else True)
+        if not dialog.result:
+            return
+        name, remember = dialog.result
+        existing = self.saved.get(name)
+        if existing and (current is None or existing.name.lower() != current.name.lower()):
+            if not messagebox.askyesno(APP_NAME, f"Replace the saved connection '{existing.name}'?"):
+                return
+        conn = Connection(name=existing.name if existing else name, host=host, port=port, user=user,
+                          tls=self.tls_var.get(), save_password=remember and bool(self.pass_var.get()))
+        try:
+            self.saved.save(conn, self.pass_var.get() if conn.save_password else None)
+        except Exception as exc:  # e.g. password store refused
+            messagebox.showerror(APP_NAME, f"Could not save: {exc}")
+            return
+        self.saved_var.set(conn.name)
+        self._refresh_saved_list()
+        extra = f" (password kept in {PASSWORD_STORE})" if conn.save_password else ""
+        self.write_log(f"Saved '{conn.name}'{extra}.")
+
+    def forget_saved(self) -> None:
+        name = self.saved_var.get()
+        if not name or not messagebox.askyesno(APP_NAME, f"Forget the saved connection '{name}'?"):
+            return
+        try:
+            self.saved.remove(name)
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Could not forget it: {exc}")
+            return
+        self.saved_var.set("")
+        self._refresh_saved_list()
+        self.write_log(f"Forgot '{name}'.")
 
     def _action_buttons(self, parent: tk.Misc, side: Optional[str],
                         file_parent: Optional[tk.Misc] = None) -> None:
@@ -498,6 +611,12 @@ class App(tk.Tk):
         def done(result):
             welcome, cwd, entries = result
             self.write_log(welcome)
+            chosen = self.saved.get(self.saved_var.get()) if self.saved_var.get() else None
+            if chosen and chosen.host == host:
+                try:
+                    self.saved.mark_used(chosen.name)
+                except OSError:
+                    pass
             self._update_connected()
             self.remote_dir = cwd
             self.remote_pane.show(cwd, entries)
@@ -684,6 +803,138 @@ class App(tk.Tk):
                         self.client.rm(name)
                 return self.client.pwd(), self.client.listdir()
             self.run_bg("Delete", work, lambda r: self.remote_pane.show(*r))
+
+
+def changelog_text() -> str:
+    """CHANGELOG.md, next to this file or bundled inside the .exe."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(os.path.join(base, "CHANGELOG.md"), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return f"# What's new\n\nYou're running version {__version__}."
+
+
+class ChangelogWindow(tk.Toplevel):
+    """Shows CHANGELOG.md with headings and bullets tidied up, in the current look."""
+
+    def __init__(self, parent: tk.Misc, look: Look, fonts: Fonts) -> None:
+        super().__init__(parent)
+        self.title(f"What's new in {APP_NAME}")
+        self.geometry("620x520")
+        self.transient(parent)
+        c = look.colors or {}
+        bg, ink = c.get("panel"), c.get("ink")
+        if c:
+            self.configure(bg=c["bg"])
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill="both", expand=True)
+        ttk.Button(frame, text="Close", command=self.destroy,
+                   style="Primary.TButton" if c else "TButton").pack(side="bottom", anchor="e", pady=(8, 0))
+        text = tk.Text(frame, wrap="word", relief="flat", padx=14, pady=10, cursor="arrow",
+                       highlightthickness=1 if c else 0)
+        if c:
+            text.configure(bg=bg, fg=ink, highlightbackground=c["border"], highlightcolor=c["border"])
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+
+        base = tkfont.Font(font=fonts.body)
+        fam, size = base.actual("family"), base.actual("size")
+        text.configure(font=(fam, size))
+        title_color = c.get("title", ink) if c else None
+        text.tag_configure("h1", font=(fam, size + 8, "bold"), foreground=title_color, spacing3=8)
+        text.tag_configure("h2", font=(fam, size + 4, "bold"), foreground=title_color,
+                           spacing1=14, spacing3=4)
+        text.tag_configure("h3", font=(fam, size + 1, "bold"), spacing1=8, spacing3=2)
+        text.tag_configure("bullet", lmargin1=10, lmargin2=28, spacing3=3)
+        text.tag_configure("bold", font=(fam, size, "bold"))
+        text.tag_configure("code", font=("Consolas", size) if sys.platform == "win32" else ("Courier", size))
+        for line in changelog_text().splitlines():
+            if line.startswith("### "):
+                text.insert("end", line[4:] + "\n", "h3")
+            elif line.startswith("## "):
+                text.insert("end", line[3:] + "\n", "h2")
+            elif line.startswith("# "):
+                text.insert("end", line[2:] + "\n", "h1")
+            elif line.startswith("- "):
+                text.insert("end", "•  ", "bullet")
+                self._inline(text, line[2:], "bullet")
+                text.insert("end", "\n", "bullet")
+            else:
+                self._inline(text, line, ())
+                text.insert("end", "\n")
+        text.configure(state="disabled")
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    @staticmethod
+    def _inline(text: tk.Text, line: str, base_tag) -> None:
+        """Very small Markdown: **bold** and `code`."""
+        base = (base_tag,) if isinstance(base_tag, str) else tuple(base_tag)
+        for part in re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", line):
+            if part.startswith("**") and part.endswith("**") and len(part) > 4:
+                text.insert("end", part[2:-2], base + ("bold",))
+            elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+                text.insert("end", part[1:-1], base + ("code",))
+            elif part:
+                text.insert("end", part, base)
+
+
+class SaveDialog(simpledialog.Dialog):
+    """Ask for a name for the connection and whether to remember the password."""
+
+    def __init__(self, parent: tk.Misc, look: Look, name: str, has_password: bool,
+                 can_store: bool, remember: bool) -> None:
+        self.look = look
+        self.name_var = tk.StringVar(value=name)
+        self.remember_var = tk.BooleanVar(value=remember and has_password and can_store)
+        self.has_password, self.can_store = has_password, can_store
+        self.result: Optional[Tuple[str, bool]] = None
+        super().__init__(parent, title="Save connection")
+
+    def body(self, master: tk.Frame) -> tk.Widget:
+        bg = (self.look.colors or {}).get("bg")
+        if bg:
+            self.configure(bg=bg)
+            master.configure(bg=bg)
+        frame = ttk.Frame(master, padding=10)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Name for this connection:").pack(anchor="w")
+        entry = ttk.Entry(frame, textvariable=self.name_var, width=34)
+        entry.pack(fill="x", pady=(2, 10))
+        entry.select_range(0, "end")
+        check = ttk.Checkbutton(frame, text="Remember the password", variable=self.remember_var)
+        check.pack(anchor="w")
+        if not self.can_store:
+            check.state(["disabled"])
+            note = "Passwords can't be saved on this computer; you'll type it each time."
+        elif not self.has_password:
+            check.state(["disabled"])
+            note = "No password typed in, so there is none to remember."
+        else:
+            note = f"It's kept in {PASSWORD_STORE}, not in a plain file."
+        ttk.Label(frame, text=note, style="Muted.TLabel" if self.look.colors else "TLabel",
+                  wraplength=300).pack(anchor="w", pady=(4, 0))
+        return entry
+
+    def buttonbox(self) -> None:
+        box = ttk.Frame(self, padding=(10, 0, 10, 10))
+        box.pack(fill="x")
+        ttk.Button(box, text="Cancel", command=self.cancel).pack(side="right")
+        ttk.Button(box, text="Save", command=self.ok,
+                   style="Primary.TButton" if self.look.colors else "TButton").pack(side="right", padx=6)
+        self.bind("<Return>", self.ok)
+        self.bind("<Escape>", self.cancel)
+
+    def validate(self) -> bool:
+        if not self.name_var.get().strip():
+            messagebox.showwarning(APP_NAME, "Give the connection a name.", parent=self)
+            return False
+        return True
+
+    def apply(self) -> None:
+        self.result = (self.name_var.get().strip(), bool(self.remember_var.get()))
 
 
 def main() -> None:

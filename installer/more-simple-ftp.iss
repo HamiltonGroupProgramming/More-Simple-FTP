@@ -1,9 +1,9 @@
 ; Inno Setup script for More Simple FTP.
-; Build with:  iscc /DAppVersion=0.1.0 installer\more-simple-ftp.iss
+; Build with:  iscc /DAppVersion=1.0.0 installer\more-simple-ftp.iss
 ; Expects PyInstaller output in dist\ (see build.ps1).
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "1.0.0"
 #endif
 
 [Setup]
@@ -32,6 +32,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist\MoreSimpleFTP.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\ftpclient.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\More Simple FTP"; Filename: "{app}\MoreSimpleFTP.exe"

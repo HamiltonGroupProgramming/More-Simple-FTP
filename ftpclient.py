@@ -5,6 +5,9 @@ Usage examples:
     python ftpclient.py ftp.example.com -u alice            # interactive shell
     python ftpclient.py ftp.example.com -u alice ls /pub    # one-shot command
     python ftpclient.py ftp.example.com --tls get file.txt
+    python ftpclient.py ftp.example.com -u alice --save work # connect and save as "work"
+    python ftpclient.py work ls                               # use the saved connection
+    python ftpclient.py --saved                               # list saved connections
 
 Commands: ls, cd, pwd, get, put, mkdir, rm, rmdir, help, quit
 """
@@ -22,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 ProgressCallback = Callable[[int, Optional[int]], None]
 
@@ -368,30 +371,76 @@ class FTPShell(cmd.Cmd):
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ftpclient", description="More Simple FTP command-line client")
-    p.add_argument("host", help="FTP server host name")
+    p.add_argument("host", nargs="?", help="FTP server host name, or the name of a saved connection")
     p.add_argument("command", nargs="*",
                    help="optional one-shot command, e.g. 'ls /pub' or 'get file.txt' (put -- before commands that take flags)")
-    p.add_argument("-P", "--port", type=int, default=21)
-    p.add_argument("-u", "--user", default="anonymous")
+    p.add_argument("-P", "--port", type=int, default=None, help="port (default 21)")
+    p.add_argument("-u", "--user", default=None, help="user name (default anonymous)")
     p.add_argument("-p", "--password", help="password (prompted for if omitted and user is not anonymous)")
-    p.add_argument("--tls", action="store_true", help="use explicit FTPS (FTP over TLS)")
+    p.add_argument("--tls", action="store_true", default=None, help="use explicit FTPS (FTP over TLS)")
+    saved = p.add_argument_group("saved connections (shared with the MoreSimpleFTP window)")
+    saved.add_argument("--save", metavar="NAME", help="after connecting, save these details as NAME")
+    saved.add_argument("--save-password", action="store_true",
+                       help="with --save: also keep the password in the system password store")
+    saved.add_argument("--saved", action="store_true", help="list saved connections and exit")
+    saved.add_argument("--forget", metavar="NAME", help="delete a saved connection and exit")
     p.add_argument("--active", action="store_true", help="use active mode instead of passive")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
 
 
-def main(argv: Optional[Iterable[str]] = None) -> int:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
+def main(argv: Optional[Iterable[str]] = None, saved_connections=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    from connections import Connection, SavedConnections  # local import keeps the core dependency-free
+    store = saved_connections if saved_connections is not None else SavedConnections()
+
+    if args.saved:
+        conns = store.all()
+        if not conns:
+            print("No saved connections yet. Save one with --save NAME.")
+        for c in conns:
+            extra = (", TLS" if c.tls else "") + (", password saved" if c.save_password else "")
+            print(f"{c.name}: {c.user}@{c.host}:{c.port}{extra}")
+        return 0
+    if args.forget:
+        if store.remove(args.forget):
+            print(f"Forgot {args.forget}")
+            return 0
+        print(f"No saved connection called {args.forget}", file=sys.stderr)
+        return 1
+    if not args.host:
+        parser.error("give a host name or the name of a saved connection (see --saved)")
+
+    saved = store.get(args.host)
+    host = saved.host if saved else args.host
+    port = args.port if args.port is not None else (saved.port if saved else 21)
+    user = args.user if args.user is not None else (saved.user if saved else "anonymous")
+    tls = bool(args.tls) or bool(saved and saved.tls)
     password = args.password
+    if password is None and saved and user == saved.user:
+        password = store.password(saved)
     if password is None:
-        password = "" if args.user == "anonymous" else getpass.getpass(f"Password for {args.user}: ")
+        password = "" if user == "anonymous" else getpass.getpass(f"Password for {user}: ")
     client = FTPClient()
     try:
-        print(client.connect(args.host, args.port, args.user, password,
-                             tls=args.tls, passive=not args.active))
+        print(client.connect(host, port, user, password, tls=tls, passive=not args.active))
     except ftplib.all_errors as exc:
         print(f"Could not connect: {exc}", file=sys.stderr)
         return 1
+    if args.save:
+        keep = bool(args.save_password and password)
+        try:
+            store.save(Connection(args.save, host, port, user, tls, save_password=keep),
+                       password if keep else None)
+            print(f"Saved as {args.save}" + (" (with password)" if keep else ""))
+        except Exception as exc:
+            print(f"Could not save the connection: {exc}", file=sys.stderr)
+    elif saved:
+        try:
+            store.mark_used(saved.name)
+        except OSError:
+            pass
     shell = FTPShell(client)
     if args.command:
         shell.onecmd(shlex.join(args.command))
