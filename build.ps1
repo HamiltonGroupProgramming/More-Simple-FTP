@@ -9,7 +9,7 @@ python -m pip install -r requirements-build.txt
 $version = (python -c "import ftpclient; print(ftpclient.__version__)").Trim()
 Write-Host "Building More Simple FTP $version"
 
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name MoreSimpleFTP --hidden-import keyring.backends.Windows ftpgui.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name MoreSimpleFTP --hidden-import keyring.backends.Windows --add-data "CHANGELOG.md;." ftpgui.py
 python -m PyInstaller --noconfirm --clean --onefile --console  --name ftpclient     --hidden-import connections --hidden-import keyring.backends.Windows ftpclient.py
 
 $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source

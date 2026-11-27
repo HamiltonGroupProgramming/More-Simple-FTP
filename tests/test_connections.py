@@ -88,3 +88,11 @@ def test_cli_lists_and_forgets(saved, capsys):
     assert "work: alice@ftp.example.com:21, password saved" in capsys.readouterr().out
     assert ftpclient.main(["--forget", "work"], saved) == 0
     assert ftpclient.main(["--forget", "work"], saved) == 1
+
+
+def test_changelog_covers_current_version():
+    import os
+    import ftpclient
+    path = os.path.join(os.path.dirname(__file__), os.pardir, "CHANGELOG.md")
+    with open(path, encoding="utf-8") as fh:
+        assert f"## {ftpclient.__version__} " in fh.read()

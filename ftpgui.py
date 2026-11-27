@@ -8,11 +8,13 @@ import os
 import posixpath
 import queue
 import random
+import re
 import shutil
 import sys
 import threading
 import time
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Tuple
 
@@ -207,7 +209,18 @@ class App(tk.Tk):
                                       command=self.change_look)
         settings.add_cascade(label="Look", menu=look_menu)
         menubar.add_cascade(label="Settings", menu=settings)
+        help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(label="What's new", command=self.show_changelog)
+        help_menu.add_command(label=f"About {APP_NAME}", command=lambda: messagebox.showinfo(
+            APP_NAME, f"{APP_NAME} {__version__}", parent=self))
+        menubar.add_cascade(label="Help", menu=help_menu)
         self.config(menu=menubar)
+
+    def show_changelog(self) -> None:
+        if getattr(self, "changelog_win", None) is not None and self.changelog_win.winfo_exists():
+            self.changelog_win.lift()
+            return
+        self.changelog_win = ChangelogWindow(self, self.look, self.fonts)
 
     def change_look(self) -> None:
         key = self.look_var.get()
@@ -786,6 +799,82 @@ class App(tk.Tk):
                         self.client.rm(name)
                 return self.client.pwd(), self.client.listdir()
             self.run_bg("Delete", work, lambda r: self.remote_pane.show(*r))
+
+
+def changelog_text() -> str:
+    """CHANGELOG.md, next to this file or bundled inside the .exe."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(os.path.join(base, "CHANGELOG.md"), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return f"# What's new\n\nYou're running version {__version__}."
+
+
+class ChangelogWindow(tk.Toplevel):
+    """Shows CHANGELOG.md with headings and bullets tidied up, in the current look."""
+
+    def __init__(self, parent: tk.Misc, look: Look, fonts: Fonts) -> None:
+        super().__init__(parent)
+        self.title(f"What's new in {APP_NAME}")
+        self.geometry("620x520")
+        self.transient(parent)
+        c = look.colors or {}
+        bg, ink = c.get("panel"), c.get("ink")
+        if c:
+            self.configure(bg=c["bg"])
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill="both", expand=True)
+        ttk.Button(frame, text="Close", command=self.destroy,
+                   style="Primary.TButton" if c else "TButton").pack(side="bottom", anchor="e", pady=(8, 0))
+        text = tk.Text(frame, wrap="word", relief="flat", padx=14, pady=10, cursor="arrow",
+                       highlightthickness=1 if c else 0)
+        if c:
+            text.configure(bg=bg, fg=ink, highlightbackground=c["border"], highlightcolor=c["border"])
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+
+        base = tkfont.Font(font=fonts.body)
+        fam, size = base.actual("family"), base.actual("size")
+        text.configure(font=(fam, size))
+        title_color = c.get("title", ink) if c else None
+        text.tag_configure("h1", font=(fam, size + 8, "bold"), foreground=title_color, spacing3=8)
+        text.tag_configure("h2", font=(fam, size + 4, "bold"), foreground=title_color,
+                           spacing1=14, spacing3=4)
+        text.tag_configure("h3", font=(fam, size + 1, "bold"), spacing1=8, spacing3=2)
+        text.tag_configure("bullet", lmargin1=10, lmargin2=28, spacing3=3)
+        text.tag_configure("bold", font=(fam, size, "bold"))
+        text.tag_configure("code", font=("Consolas", size) if sys.platform == "win32" else ("Courier", size))
+        for line in changelog_text().splitlines():
+            if line.startswith("### "):
+                text.insert("end", line[4:] + "\n", "h3")
+            elif line.startswith("## "):
+                text.insert("end", line[3:] + "\n", "h2")
+            elif line.startswith("# "):
+                text.insert("end", line[2:] + "\n", "h1")
+            elif line.startswith("- "):
+                text.insert("end", "•  ", "bullet")
+                self._inline(text, line[2:], "bullet")
+                text.insert("end", "\n", "bullet")
+            else:
+                self._inline(text, line, ())
+                text.insert("end", "\n")
+        text.configure(state="disabled")
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    @staticmethod
+    def _inline(text: tk.Text, line: str, base_tag) -> None:
+        """Very small Markdown: **bold** and `code`."""
+        base = (base_tag,) if isinstance(base_tag, str) else tuple(base_tag)
+        for part in re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", line):
+            if part.startswith("**") and part.endswith("**") and len(part) > 4:
+                text.insert("end", part[2:-2], base + ("bold",))
+            elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+                text.insert("end", part[1:-1], base + ("code",))
+            elif part:
+                text.insert("end", part, base)
 
 
 class SaveDialog(simpledialog.Dialog):

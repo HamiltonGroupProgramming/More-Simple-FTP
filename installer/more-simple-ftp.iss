@@ -31,6 +31,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist\MoreSimpleFTP.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\ftpclient.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\More Simple FTP"; Filename: "{app}\MoreSimpleFTP.exe"
