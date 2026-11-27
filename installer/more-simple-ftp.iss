@@ -1,5 +1,5 @@
 ; Inno Setup script for More Simple FTP.
-; Build with:  iscc /DAppVersion=0.2.0 installer\more-simple-ftp.iss
+; Build with:  iscc /DAppVersion=1.0.0 installer\more-simple-ftp.iss
 ; Expects PyInstaller output in dist\ (see build.ps1).
 
 #ifndef AppVersion
