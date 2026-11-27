@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 ProgressCallback = Callable[[int, Optional[int]], None]
 

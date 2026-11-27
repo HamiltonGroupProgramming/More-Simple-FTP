@@ -1,6 +1,6 @@
 # What's new in More Simple FTP
 
-## 0.2.0 (2026-11-27)
+## 1.0.0 (2026-11-27)
 
 ### Saved connections
 - Save the servers you use so you don't have to retype them. Fill in the boxes, press **Save** (or **Remember it** in the Crayon look), and give it a name.
